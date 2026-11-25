@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Q Structure — โปรแกรมวิเคราะห์โครงสร้างบ้าน</title>
+<style>
+:root{font:16px/1.55 "Leelawadee UI","Noto Sans Thai",Tahoma,system-ui,sans-serif;color:#edfaf7;background:#101b1c;--panel:#19292a;--line:#385153;--muted:#b5cdc9;--accent:#86f0bf;--orange:#ffcf88}
+*{box-sizing:border-box}body{margin:0}header,main,footer{width:min(1160px,calc(100% - 32px));margin:auto}header{padding:28px 0 10px}h1,h2,h3,p{margin:0 0 .65rem}h1{font-size:clamp(2rem,6vw,3.25rem);letter-spacing:-.045em;line-height:1.1} h2{font-size:1.45rem}h3{font-size:1.15rem}small,.meta{color:var(--muted);font-size:.88rem}a{color:inherit}button,input,select{font:inherit}button{background:#233b3b;color:inherit;border:1px solid var(--line);border-radius:8px;padding:.45rem .8rem;cursor:pointer;min-height:42px}button.primary,button[aria-current=true]{background:var(--accent);color:#092726;border-color:var(--accent);font-weight:700}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--orange);outline-offset:3px}button:hover{filter:brightness(1.12)}label{display:grid;gap:.2rem;font-size:.94rem}input,select{color:inherit;background:#102021;border:1px solid var(--line);border-radius:8px;padding:.5rem .6rem;min-height:42px;width:100%}nav,.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}nav{margin:15px 0}.actions{margin:.65rem 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:clamp(.85rem,2vw,1.25rem);margin-bottom:1rem}.hero{display:flex;align-items:end;justify-content:space-between;gap:1rem;flex-wrap:wrap}.warn{border-left:4px solid var(--orange);color:var(--orange);padding:.2rem .65rem;margin:.55rem 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr));gap:.8rem}.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:.6rem;margin:.6rem 0}.tile{border:1px solid var(--line);padding:.65rem;border-radius:8px}.tile strong{display:block;color:var(--accent);font-size:1.35rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;white-space:nowrap}td,th{text-align:left;padding:.55rem .7rem;border-bottom:1px solid var(--line)}th{color:var(--muted)}td:last-child{width:1%}footer{padding:.5rem 0 1.6rem}.empty{color:var(--muted)}details{margin:.75rem 0}summary{cursor:pointer;color:var(--accent)}.detail{padding:.55rem 0}.pill{color:var(--accent);font-size:.85rem}#message{min-height:1.7rem;color:var(--orange)}[hidden]{display:none!important}
+@media print{body,.card{background:#fff;color:#111}header,main{width:100%}nav,button,footer,#message,.no-print{display:none!important}table{white-space:normal}.scroll{overflow:visible}.card{break-inside:avoid}.meta,small,.warn,.tile strong{color:#222}}
+</style>
+</head>
+<body>
+<header>
+<div class="hero"><div><p class="pill">เวอร์ชันทดลอง 0.1</p><h1>Q Structure</h1><p class="meta">ติดตามน้ำหนักแนวดิ่งจากพื้นและหลังคาถึงฐานราก</p></div>
+<div class="actions no-print"><button id="backup">สำรอง JSON</button><button id="restore">นำเข้า JSON</button><input type="file" id="json" accept=".json,application/json" hidden></div></div>
+<nav id="nav" aria-label="หน้าคำนวณ"></nav>
+<div id="message" role="status"></div>
+</header>
+<main id="app"></main>
+<footer class="meta"><a href="https://engineeringstatics.org/distributed-loads.html">อ้างอิงเรื่องแรงกระจายและแรงปฏิกิริยา</a> · ข้อมูลโครงการเก็บในเบราว์เซอร์ที่ใช้เปิดโปรแกรม</footer>
+<script>
+'use strict';
+const storageKey = 'q-structure-v1';
+const app = document.getElementById('app');
+const message = document.getElementById('message');
+const nav = document.getElementById('nav');
+const units = new Intl.NumberFormat('th-TH',{maximumFractionDigits:3});
+const format = n => units.format(n);
+const h = s => String(s ?? '').replace(/[&<>"']/g,c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const key = () => globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36) + Math.random().toString(36).slice(2);
+const phases = {projects:'โครงการ',areas:'พื้น / หลังคา / บันได',beams:'คาน',columns:'เสา',bases:'ฐานราก',report:'รายการคำนวณ'};
+const kinds = {floor:'พื้น',roof:'หลังคา',stair:'บันได'};
+const newProject = (name, stories=1) => ({id:key(),name,stories,place:'',materials:'',areas:[],beams:[],columns:[],bases:[]});
+
+function sample() {
+  const p = newProject('บ้านตัวอย่าง 1 ชั้น');
+  p.materials = 'ตัวอย่างระบบพื้น–คาน–เสา';
+  p.bases = Array.from({length:4}, (_,i)=>({id:'f'+i,name:'F'+(i+1),note:''}));
+  p.columns = p.bases.map((base,i)=>({id:'c'+i,name:'C'+(i+1),level:1,dead:0,destination:'base:'+base.id}));
+  p.beams = [0,1].map((i)=>({id:'b'+i,name:'B'+(i+1),level:1,kind:'simple',length:5,dead:1.5,live:0,pointDead:0,pointLive:0,x:2.5,left:'c'+2*i,right:'c'+(2*i+1)}));
+  p.areas = [{id:'s1',name:'S1 พื้นห้องนั่งเล่น',kind:'floor',level:1,area:20,dead:4,live:2,beam1:'b0',beam2:'b1',share:50}];
+  return p;
+}
+
+const textField = (id,label,optional=false) => ({id,label,type:'text',optional});
+const numberField = (id,label,min=0,max=1000000,value=0,step='any') => ({id,label,type:'number',min,max,value,step});
+const selectField = (id,label,options,optional=false) => ({id,label,type:'select',options,optional});
+const namesFor = rows => Object.fromEntries(rows.map(row=>[row.id,row.name]));
+const storyField = p=>numberField('level','ชั้น / ระดับรับแรง',1,p.stories,1,1);
+const fields = {
+  areas:p=>[textField('name','รหัสและชื่อแผง'),selectField('kind','ประเภท',kinds),storyField(p),numberField('area','พื้นที่ที่นำมาคิดน้ำหนัก (ม²)',0.001),numberField('dead','น้ำหนักคงที่ G (kN/ม²)'),numberField('live','น้ำหนักจร Q (kN/ม²)'),selectField('beam1','คานรับแรงตัวแรก',namesFor(p.beams)),selectField('beam2','คานรับแรงตัวที่สอง',namesFor(p.beams),true),numberField('share','ส่วนที่ลงคานตัวแรก (%) เมื่อมีสองตัว',0,100,50)],
+  beams:p=>[textField('name','รหัสคาน'),storyField(p),selectField('kind','ระบบรองรับ',{simple:'คานช่วงเดียว รองรับสองด้าน',cantilever:'คานยื่น ยึดแน่นที่ด้าน A'}),numberField('length','ช่วงคาน / ระยะยื่น (ม.)',0.001),numberField('dead','น้ำหนักกระจายคงที่ G รวมตัวคาน (kN/ม.)'),numberField('live','น้ำหนักกระจายจร Q (kN/ม.)'),numberField('pointDead','แรงจุด G (kN)'),numberField('pointLive','แรงจุด Q (kN)'),numberField('x','ระยะของแรงจุดจากด้าน A (ม.)'),selectField('left','เสารองรับด้าน A',namesFor(p.columns)),selectField('right','เสารองรับด้าน B สำหรับคานช่วงเดียว',namesFor(p.columns),true)],
+  columns:p=>[textField('name','รหัสเสา'),storyField(p),numberField('dead','น้ำหนักตัวเสาช่วงนี้ (kN)'),selectField('destination','ถ่ายแรงลง',Object.fromEntries([...p.bases.map(v=>['base:'+v.id,'ฐานราก '+v.name]),...p.columns.map(v=>['column:'+v.id,'เสา '+v.name+' ชั้น '+v.level])]))],
+  bases:()=>[textField('name','รหัสฐานราก'),textField('note','ข้อมูลดินหรือชนิดฐานราก (บันทึกประกอบ)',true)]
+};
+const projectFields = [textField('name','ชื่อโครงการ'),numberField('stories','จำนวนชั้น',1,2,1,1),textField('place','ที่ตั้ง',true),textField('materials','ระบบโครงสร้างและวัสดุ (บันทึกประกอบ)',true)];
+
+function validRow(row, schema) {
+  return typeof row.id==='string' && row.id.trim() && schema.every(field=>{
+    const value = row[field.id];
+    if (field.type==='number') return Number.isFinite(value) && value>=field.min && value<=field.max && (field.step!==1 || Number.isInteger(value));
+    if (typeof value!=='string') return false;
+    if (field.type==='text') return field.optional || Boolean(value.trim());
+    return field.optional && !value || Object.hasOwn(field.options,value);
+  });
+}
+
+function problem(p, group, row) {
+  if (group==='areas') {
+    if (row.beam2 && row.beam1===row.beam2) return 'เลือกคานรับแรงสองตัวที่ต่างกัน';
+    if (p.beams.some(b=>(b.id===row.beam1 || b.id===row.beam2) && b.level!==row.level)) return 'แผงและคานรับแรงต้องอยู่ระดับเดียวกัน';
+  }
+  if (group==='beams') {
+    if (row.x>row.length) return 'ตำแหน่งแรงจุดต้องอยู่ภายในความยาวคาน';
+    if (row.kind==='simple' && (!row.right || row.right===row.left)) return 'คานช่วงเดียวต้องมีเสารองรับด้าน A และ B คนละต้น';
+    if (p.columns.some(c=>(c.id===row.left || c.id===row.right) && c.level!==row.level)) return 'คานและช่วงเสาที่รองรับต้องอยู่ระดับเดียวกัน';
+  }
+  if (group==='columns' && row.destination.startsWith('column:')) {
+    const lower = p.columns.find(c=>'column:'+c.id===row.destination);
+    if (!lower || lower.level>=row.level) return 'เสาที่รับแรงต่อจะต้องอยู่ชั้นต่ำกว่า';
+  }
+  return '';
+}
+
+function validateProject(p) {
+  if (!p || !validRow(p,projectFields) || Object.keys(fields).some(group=>!Array.isArray(p[group]) || p[group].some(r=>!r || typeof r.id!=='string' || typeof r.name!=='string'))) return false;
+  return Object.keys(fields).every(group=>{
+    const rows = p[group];
+    const schema = fields[group](p);
+    return new Set(rows.map(r=>r.id)).size===rows.length
+      && new Set(rows.map(r=>r.name.trim().toLowerCase())).size===rows.length
+      && rows.every(r=>validRow(r,schema) && !problem(p,group,r));
+  });
+}
+
+function validateStore(data) {
+  return data?.version===1 && Array.isArray(data.projects) && data.projects.length>0
+    && data.projects.every(validateProject)
+    && new Set(data.projects.map(p=>p.id)).size===data.projects.length
+    && data.projects.some(p=>p.id===data.active);
+}
+
+function freshStore() {
+  const project = sample();
+  return {version:1,active:project.id,projects:[project]};
+}
+let notice = '';
+function load() {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return freshStore();
+    const parsed = JSON.parse(raw);
+    if (validateStore(parsed)) return parsed;
+    notice = 'อ่านข้อมูลเดิมไม่ได้ เปิดบ้านตัวอย่างให้ดู';
+  } catch { notice = 'เปิดข้อมูลที่บันทึกไว้ไม่ได้ เปิดบ้านตัวอย่างให้ดู'; }
+  return freshStore();
+}
+let store = load();
+let page = 'projects';
+let editing;
+const current = () => store.projects.find(p=>p.id===store.active);
+function save(text) {
+  try { localStorage.setItem(storageKey,JSON.stringify(store)); }
+  catch { text = (text ? text+' · ' : '')+'พื้นที่บันทึกบนเครื่องใช้ไม่ได้ กรุณาสำรอง JSON ก่อนปิด'; }
+  render();
+  message.textContent=text;
+}
+
+function solve(kind,length,line,point,x) {
+  const total = line*length + point;
+  const right = kind==='simple' ? line*length/2 + point*x/length : 0;
+  const left = total-right;
+  if (kind==='cantilever') {
+    return {total,left,right,shear:x===0 ? line*length : left,moment:-(line*length*length/2 + point*x)};
+  }
+  const candidates = [0,x,length];
+  if (line>0) {
+    const before = left/line;
+    const after = (left-point)/line;
+    if (before>0 && before<x) candidates.push(before);
+    if (after>x && after<length) candidates.push(after);
+  }
+  const moment = Math.max(...candidates.map(s=>left*s-line*s*s/2-point*Math.max(0,s-x)));
+  const shearA = x===0 ? left-point : left;
+  const shearB = x===length ? right-point : right;
+  return {total,left,right,shear:Math.max(Math.abs(shearA),Math.abs(shearB)),moment};
+}
+
+function compute(p) {
+  const areas = p.areas.map(a=>{
+    const portion = a.beam2 ? a.share/100 : 1;
+    const receivers = [{id:a.beam1,portion}];
+    if (a.beam2) receivers.push({id:a.beam2,portion:1-portion});
+    return {...a,g:a.area*a.dead,q:a.area*a.live,receivers};
+  });
+  const beams = p.beams.map(b=>{
+    const sources = areas.flatMap(a=>a.receivers.filter(r=>r.id===b.id).map(r=>({name:a.name,g:a.g*r.portion,q:a.q*r.portion})));
+    const g = b.dead + sources.reduce((sum,a)=>sum+a.g,0)/b.length;
+    const q = b.live + sources.reduce((sum,a)=>sum+a.q,0)/b.length;
+    const dead = solve(b.kind,b.length,g,b.pointDead,b.x);
+    const live = solve(b.kind,b.length,q,b.pointLive,b.x);
+    const combined = solve(b.kind,b.length,g+q,b.pointDead+b.pointLive,b.x);
+    return {...b,sources,g,q,result:{dead,live,combined}};
+  });
+  const columns = [...p.columns].sort((a,b)=>b.level-a.level).map(c=>({...c,g:c.dead,q:0,sources:[]}));
+  const bases = p.bases.map(f=>({...f,g:0,q:0,sources:[]}));
+  const columnMap = new Map(columns.map(c=>[c.id,c]));
+  const baseMap = new Map(bases.map(f=>[f.id,f]));
+  function add(node,name,g,q) {
+    node.g+=g;
+    node.q+=q;
+    node.sources.push({name,g,q});
+  }
+  for (const b of beams) {
+    add(columnMap.get(b.left),b.name+' ด้าน A',b.result.dead.left,b.result.live.left);
+    if (b.kind==='simple') add(columnMap.get(b.right),b.name+' ด้าน B',b.result.dead.right,b.result.live.right);
+  }
+  for (const c of columns) {
+    const [type,...parts] = c.destination.split(':');
+    const target = (type==='base' ? baseMap : columnMap).get(parts.join(':'));
+    add(target,c.name,c.g,c.q);
+  }
+  return {areas,beams,columns,bases};
+}
+
+function fieldInput(field,row={}) {
+  const value = row[field.id] ?? field.value ?? '';
+  const attrs = ' name="'+field.id+'" '+(field.optional?'':'required');
+  const options = field.options ?? {};
+  const blank = field.optional ? 'ไม่ระบุ' : 'เลือก…';
+  let input;
+  if (field.type==='select') {
+    input = '<select'+attrs+'><option value="">'+blank+'</option>'+Object.entries(options).map(([id,label])=>'<option value="'+h(id)+'" '+(id===value?'selected':'')+'>'+h(label)+'</option>').join('')+'</select>';
+  } else {
+    const bounds = field.type==='number'?' min="'+field.min+'" max="'+field.max+'" step="'+field.step+'"':' maxlength="120"';
+    input = '<input type="'+field.type+'"'+attrs+bounds+' value="'+h(value)+'">';
+  }
+  return '<label>'+field.label+input+'</label>';
+}
+function fromForm(form,schema) {
+  const data = new FormData(form);
+  return Object.fromEntries(schema.map(f=>[f.id,f.type==='number'?Number(data.get(f.id)):String(data.get(f.id) ?? '').trim()]));
+}
+function table(headers,rows) {
+  if (!rows.length) return '<p class="empty">ยังไม่มีรายการ</p>';
+  return '<div class="scroll"><table><thead><tr>'+headers.map(t=>'<th scope="col">'+t+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+}
+const button = (action,label,id,primary=false)=>'<button type="button" data-do="'+action+'" '+(id?'data-id="'+h(id)+'" ':'')+(primary?'class="primary"':'')+'>'+label+'</button>';
+const title = (row)=>h(row.name)+(row.level?'<br><small>ชั้น '+row.level+'</small>':'');
+const force = value => format(value)+' kN';
+const moment = value => format(value)+' kN·m';
+const tile = (label,value)=>'<div class="tile"><small>'+label+'</small><strong>'+format(value)+'</strong></div>';
+const textFor = (rows,id)=>h(rows.find(v=>v.id===id)?.name ?? '—');
+const roadmap = '<details><summary>ขอบเขตโปรแกรมสำหรับบ้านทั้งหลัง</summary><div class="detail"><p><strong>ข้อมูลโครงการ</strong> · จำนวนชั้น ผังแนวเสา ระดับชั้น วัสดุ และการใช้งานของห้อง</p><p><strong>พื้น หลังคา และบันได</strong> · ระบบรองรับ น้ำหนักวัสดุ น้ำหนักใช้งาน และเส้นทางถ่ายแรง</p><p><strong>คานและเสา</strong> · คานช่วงเดียว คานยื่น คานต่อเนื่อง กรณีแรงกระทำ ผลแรงภายใน การตรวจหน้าตัด และการออกแบบเหล็ก</p><p><strong>ฐานราก</strong> · แรงที่ฐาน ข้อมูลสำรวจดิน เลือกชนิดฐานราก และตรวจแรงกดดินกับการทรุดตัว</p><p><strong>การตรวจทั้งอาคาร</strong> · มาตรฐานและชุดแรงออกแบบ แรงด้านข้าง ความมั่นคง และรายงานพร้อมที่มาของแรง</p><p class="meta">รุ่นทดลองนี้คำนวณคานช่วงเดียวและคานยื่นจากแรงกระจายกับแรงจุด และไล่เฉพาะแรงแนวดิ่งถึงฐานราก</p></div></details>';
+const limitations = '<p class="warn">สำหรับทดลองวิเคราะห์แรงแนวดิ่ง แสดงค่า G และ Q ตามที่ป้อน และผลรวม G + Q ก่อนคูณตัวประกอบ การออกแบบเหล็กเสริม กำลังรับน้ำหนัก การโก่งตัว แรงด้านข้าง และการออกแบบฐานรากต้องตรวจแยกก่อนใช้งานจริง</p>';
+
+function listEditor(p) {
+  const schema = fields[page](p);
+  const row = p[page].find(v=>v.id===editing) ?? (editing==='new'?{}:null);
+  const help = {
+    areas:'ใส่น้ำหนักต่อพื้นที่รวมตามที่วิเคราะห์ไว้ กำหนดสัดส่วนลงคานเอง โมเดลนี้กระจายส่วนที่ลงคานเป็นแรงสม่ำเสมอตลอดช่วงคาน',
+    beams:'แรงกระจายมีผลตลอดช่วงคาน เพิ่มแรงจุดลงได้หนึ่งตำแหน่ง ใช้หน่วย kN และเมตร',
+    columns:'สร้างฐานรากก่อน แล้วกำหนดเสาชั้นล่าง จากนั้นจึงเพิ่มเสาชั้นบนที่ถ่ายแรงลงเสาชั้นล่าง',
+    bases:'หน้านี้รวมเฉพาะแรงแนวดิ่งที่ถ่ายมาจากเสา และเก็บบันทึกข้อมูลดิน'
+  }[page];
+  return '<section class="card no-print"><h2>'+phases[page]+'</h2><p class="meta">'+help+'</p>'
+    +(row?'<form id="elementForm" class="detail"><div class="grid">'+schema.map(f=>fieldInput(f,row)).join('')+'</div><div class="actions"><button class="primary">บันทึก</button>'+button('cancel','ยกเลิก')+'</div></form>':button('add','เพิ่มรายการ',null,true))+'</section>';
+}
+
+function rowsFor(p,c,group,editable=false) {
+  const headers = {
+    areas:['แผง','ประเภท','พื้นที่ (ม²)','G','Q','คานและสัดส่วน'],
+    beams:['คาน','ระบบรองรับ','โมเมนต์ G + Q','แรงเฉือนสูงสุด G + Q','แรงด้าน A','แรงด้าน B'],
+    columns:['เสา','G','Q','G + Q','รับแรงจาก','ถ่ายแรงลง'],
+    bases:['ฐานราก','G','Q','G + Q','รับแรงจาก','ข้อมูลประกอบ']
+  }[group];
+  const rows = c[group].map(row=>{
+    let cells;
+    if (group==='areas') cells = [title(row),kinds[row.kind],format(row.area),force(row.g),force(row.q),row.receivers.map(r=>textFor(p.beams,r.id)+' '+format(100*r.portion)+'%').join('<br>')];
+    if (group==='beams') {
+      const v = row.result.combined;
+      cells = [title(row),row.kind==='simple'?'ช่วงเดียว':'ยื่น',moment(v.moment),force(v.shear),textFor(p.columns,row.left)+' · '+force(v.left),row.kind==='simple'?textFor(p.columns,row.right)+' · '+force(v.right):'—'];
+    }
+    if (group==='columns' || group==='bases') {
+      cells=[title(row),force(row.g),force(row.q),force(row.g+row.q),row.sources.map(s=>h(s.name)+' · '+force(s.g+s.q)).join('<br>') || '—'];
+      if (group==='bases') cells.push(h(row.note) || '—');
+      else {
+        const [type,...parts]=row.destination.split(':');
+        cells.push(textFor(type==='base'?p.bases:p.columns,parts.join(':')));
+      }
+    }
+    if (editable) cells.push(button('edit','แก้ไข',row.id)+' '+button('delete','ลบ',row.id));
+    return cells;
+  });
+  return table(editable?[...headers,'จัดการ']:headers,rows);
+}
+function beamDetails(c,expanded) {
+  return c.beams.map(b=>{
+    const point = b.pointDead || b.pointLive ? ' · แรงจุดที่ '+format(b.x)+' ม.' : '';
+    const rows = ['dead','live','combined'].map((mode,i)=>{
+      const r = b.result[mode];
+      return [['G','Q','G + Q'][i],force(r.total),force(r.left),b.kind==='simple'?force(r.right):'—',force(r.shear),moment(r.moment)];
+    });
+    const fromArea = b.sources.map(a=>h(a.name)+' · G '+force(a.g)+' / Q '+force(a.q)).join('<br>');
+    return '<details '+(expanded?'open':'')+'><summary>'+h(b.name)+' · ดูผลแยก G และ Q</summary><div class="detail"><p class="meta">ช่วง '+format(b.length)+' ม. · แรงกระจาย G '+format(b.g)+' kN/ม. · Q '+format(b.q)+' kN/ม.'+point+'</p>'
+      +(fromArea?'<p class="meta">'+fromArea+'</p>':'')+table(['กรณี','น้ำหนักรวม','แรงด้าน A','แรงด้าน B','แรงเฉือนสูงสุด','โมเมนต์'],rows)+'</div></details>';
+  }).join('');
+}
+
+function render() {
+  const p = current();
+  const c = compute(p);
+  nav.innerHTML = Object.entries(phases).map(([id,label])=>'<button data-page="'+id+'" aria-current="'+(id===page)+'">'+label+'</button>').join('');
+  if (page==='projects') {
+    app.innerHTML = '<section class="card"><h2>ข้อมูลบ้าน</h2><div class="actions"><label>เลือกโครงการ<select id="projectSelect">'+store.projects.map(v=>'<option value="'+h(v.id)+'" '+(v.id===p.id?'selected':'')+'>'+h(v.name)+'</option>').join('')+'</select></label>'+button('newProject','สร้างโครงการใหม่')+'</div><form id="projectForm"><div class="grid">'+projectFields.map(f=>fieldInput(f,p)).join('')+'</div><div class="actions"><button class="primary">บันทึกข้อมูลบ้าน</button></div></form></section>'
+      +'<section class="card"><h2>รายการในโครงการ</h2><div class="tiles">'+tile('แผงพื้น / หลังคา / บันได',p.areas.length)+tile('คาน',p.beams.length)+tile('เสา',p.columns.length)+tile('ฐานราก',p.bases.length)+'</div><p>บ้านตัวอย่างเปิดดูได้จากหน้าคานหรือรายการคำนวณ โครงการใหม่เริ่มที่ฐานราก ตามด้วยเสา คาน และแผงที่คานรองรับ</p>'+button('openReport','ดูรายการคำนวณ',null,true)+roadmap+limitations+'</section>';
+    return;
+  }
+  if (page==='report') {
+    const baseG = c.bases.reduce((sum,b)=>sum+b.g,0);
+    const baseQ = c.bases.reduce((sum,b)=>sum+b.q,0);
+    app.innerHTML = '<section class="card"><h2>รายการคำนวณ · '+h(p.name)+'</h2><p class="meta">'+p.stories+' ชั้น'+(p.place?' · '+h(p.place):'')+'</p>'+(p.materials?'<p class="meta">'+h(p.materials)+'</p>':'')+'<div class="tiles">'+tile('G รวมที่ฐานราก (kN)',baseG)+tile('Q รวมที่ฐานราก (kN)',baseQ)+tile('G + Q รวม (kN)',baseG+baseQ)+'</div>'+limitations+button('print','พิมพ์ / บันทึก PDF')+'</section>'
+      +Object.keys(fields).map(group=>'<section class="card"><h2>'+phases[group]+'</h2>'+rowsFor(p,c,group)+(group==='beams'?beamDetails(c,true):'')+'</section>').join('');
+  } else {
+    app.innerHTML = listEditor(p)+'<section class="card"><h2>'+h(p.name)+'</h2>'+rowsFor(p,c,page,true)+(page==='beams'?beamDetails(c,false):'')+'</section>';
+  }
+  if ((page==='beams'||page==='columns'||page==='bases'||page==='report') && c.beams.some(b=>b.kind==='cantilever')) {
+    app.insertAdjacentHTML('beforeend','<p class="warn">โมเมนต์ที่จุดยึดของคานยื่นแสดงในหน้าคานและรายงาน การถ่ายแรงลงเสาและฐานรากในรุ่นนี้รวมเฉพาะแรงแนวดิ่ง</p>');
+  }
+}
+
+nav.addEventListener('click',e=>{
+  const next = e.target.closest('[data-page]')?.dataset.page;
+  if (next) { page=next; editing=undefined; message.textContent=''; render(); }
+});
+app.addEventListener('change',e=>{
+  if (e.target.id==='projectSelect') {
+    store.active=e.target.value;
+    editing=undefined;
+    save('เปิดโครงการแล้ว');
+  }
+});
+app.addEventListener('click',e=>{
+  const target=e.target.closest('[data-do]');
+  if (!target) return;
+  const {do:action,id}=target.dataset;
+  const p=current();
+  if (action==='add'||action==='edit'||action==='cancel') {
+    editing=action==='add'?'new':id;
+    message.textContent='';
+    render();
+    document.querySelector('#elementForm input')?.focus();
+  } else if (action==='newProject') {
+    const next=newProject('บ้านหลังใหม่');
+    store.projects.push(next);
+    store.active=next.id;
+    save('สร้างโครงการแล้ว');
+    document.querySelector('#projectForm input')?.focus();
+  } else if (action==='openReport') {
+    page='report';
+    render();
+  } else if (action==='print') {
+    window.print();
+  } else if (action==='delete') {
+    const used = {
+      bases:p.columns.some(v=>v.destination==='base:'+id),
+      columns:p.columns.some(v=>v.destination==='column:'+id)||p.beams.some(v=>v.left===id||v.right===id),
+      beams:p.areas.some(v=>v.beam1===id||v.beam2===id),
+      areas:false
+    }[page];
+    if (used) { message.textContent='ยังมีรายการที่อ้างถึงชิ้นส่วนนี้ แก้จุดรองรับก่อนลบ'; return; }
+    if (!confirm('ลบรายการนี้จากโครงการ?')) return;
+    p[page]=p[page].filter(v=>v.id!==id);
+    editing=undefined;
+    save('ลบรายการแล้ว');
+  }
+});
+app.addEventListener('submit',e=>{
+  e.preventDefault();
+  const form=e.target;
+  const p=current();
+  if (form.id==='projectForm') {
+    const next={...p,...fromForm(form,projectFields)};
+    if (!validateProject(next)) {message.textContent='ตรวจชื่อโครงการและจำนวนชั้นของรายการที่มีอยู่';return;}
+    Object.assign(p,next);
+    save('บันทึกข้อมูลบ้านแล้ว');
+    return;
+  }
+  const schema=fields[page](p);
+  const row={id:editing==='new'?key():editing,...fromForm(form,schema)};
+  if (page==='beams' && row.kind==='cantilever') row.right='';
+  const issue=problem(p,page,row);
+  if (issue) {message.textContent=issue;return;}
+  const others=p[page].filter(v=>v.id!==row.id);
+  if (others.some(v=>v.name.trim().toLowerCase()===row.name.toLowerCase())) {message.textContent='รหัสนี้มีอยู่แล้วในโครงการ';return;}
+  const rows=editing==='new'?[...others,row]:p[page].map(v=>v.id===row.id?row:v);
+  if (!validateProject({...p,[page]:rows})) {message.textContent='ตรวจข้อมูลและระดับชั้นของรายการที่เกี่ยวข้อง';return;}
+  p[page]=rows;
+  editing=undefined;
+  save('บันทึกแล้ว');
+});
+document.getElementById('backup').addEventListener('click',()=>{
+  const url=URL.createObjectURL(new Blob([JSON.stringify(store,null,2)],{type:'application/json'}));
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='Q-Structure-backup.json';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+const file=document.getElementById('json');
+document.getElementById('restore').addEventListener('click',()=>file.click());
+file.addEventListener('change',async()=>{
+  const input=file.files[0];
+  if (!input) return;
+  file.value='';
+  try {
+    const backup=JSON.parse(await input.text());
+    if (!validateStore(backup)) throw new Error();
+    if (!confirm('ใช้โครงการจากไฟล์นี้แทนชุดข้อมูลบนเบราว์เซอร์นี้?')) return;
+    store=backup;
+    page='projects';
+    editing=undefined;
+    save('นำเข้าโครงการแล้ว');
+  } catch {message.textContent='อ่านไฟล์สำรองไม่ได้ กรุณาเลือก JSON ที่ส่งออกจาก Q Structure';}
+});
+render();
+if (notice) message.textContent=notice;
+</script>
+</body>
+</html>
